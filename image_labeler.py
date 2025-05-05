@@ -14,11 +14,11 @@ import pytz # Für Zeitzonen
 import streamlit.components.v1 as components # Für HTML Einbettung
 
 # --- DIES MUSS DER ERSTE STREAMLIT-BEFEHL SEIN ---
-st.set_page_config(layout="wide", page_title="URL-Kategorisierer (Multi-Labeler)")
+st.set_page_config(layout="wide", page_title="Dataset Labeler)")
 # --- ENDE DES ERSTEN STREAMLIT-BEFEHLS ---
 
 # === Pfad zur Standard-CSV-Datei ===
-DEFAULT_CSV_PATH = "input.csv"
+DEFAULT_CSV_PATH = "input.csv" # Diese Datei wird IMMER verwendet
 
 # === Google Sheets Setup ===
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/drive']
@@ -118,17 +118,25 @@ def get_processed_urls_by_labeler(target_labeler_id):
     return processed_urls
 
 @st.cache_data
-def load_urls_from_input_csv(file_input_object, source_name="hochgeladene Datei"):
+def load_urls_from_input_csv(file_path, source_name="Standarddatei"): # Parameter geändert
+    """Lädt alle URLs aus einem Dateipfad und bereinigt sie."""
     urls = []
-    if not file_input_object: st.error("Kein Datei-Objekt übergeben."); return urls
+    # Übergeben wird nun direkt der Pfad
+    if not file_path or not isinstance(file_path, str):
+        st.error("Kein gültiger Dateipfad übergeben."); return urls
+
+    # Öffne die Datei direkt mit dem Pfad
     try:
-        if hasattr(file_input_object, 'seek'): file_input_object.seek(0)
-        try:
-            df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=False, encoding='utf-8', skipinitialspace=True)
-        except UnicodeDecodeError:
-            st.warning(f"UTF-8 Fehler bei '{source_name}', versuche latin-1...")
-            if hasattr(file_input_object, 'seek'): file_input_object.seek(0)
-            df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=False, encoding='latin-1', skipinitialspace=True)
+        with open(file_path, 'rb') as file_input_object: # Öffne im Bytes-Modus
+            try:
+                # Pandas kümmert sich ums Encoding
+                df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=False, encoding='utf-8', skipinitialspace=True)
+            except UnicodeDecodeError:
+                st.warning(f"UTF-8 Fehler bei '{source_name}', versuche latin-1...")
+                # Stelle sicher, dass der Zeiger wieder am Anfang ist, falls nötig
+                file_input_object.seek(0)
+                df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=False, encoding='latin-1', skipinitialspace=True)
+
         print(f"DEBUG: CSV gelesen ({source_name}), {len(df)} Zeilen.")
         url_series_raw = df.iloc[:, 0]
         url_series_str = url_series_raw.astype(str)
@@ -140,7 +148,14 @@ def load_urls_from_input_csv(file_input_object, source_name="hochgeladene Datei"
         print(f"DEBUG: Nach Regex-Filter, {len(url_series_filtered)} Zeilen übrig.")
         urls = url_series_filtered.unique().tolist()
         print(f"DEBUG: Nach unique(), {len(urls)} URLs zurückgegeben.")
-    except Exception as e: st.error(f"Fehler beim Lesen/Verarbeiten von '{source_name}': {e}")
+    except FileNotFoundError:
+        st.error(f"Fehler: Die Standard-Input-Datei '{file_path}' wurde nicht gefunden.")
+    except pd.errors.EmptyDataError:
+        st.warning(f"Input '{source_name}' ist leer oder enthält keine Daten in der ersten Spalte.")
+    except IndexError:
+        st.warning(f"Input '{source_name}' scheint keine Spalten zu haben (Format?).")
+    except Exception as e:
+        st.error(f"Fehler beim Lesen/Verarbeiten von '{source_name}': {e}")
     return urls
 
 def save_categorization_gsheet(worksheet_obj, labeler_id, url, categories_str, comment):
@@ -190,14 +205,16 @@ st.title("📊 URL-Kategorisierer (Multi-Labeler)")
 # --- Session State Initialisierung ---
 if 'labeler_id' not in st.session_state: st.session_state.labeler_id = ""
 if 'initialized' not in st.session_state: st.session_state.initialized = False
-if 'input_file_name' not in st.session_state: st.session_state.input_file_name = None
+# input_file_name wird jetzt nicht mehr dynamisch gesetzt, kann aber bleiben
+if 'input_file_name' not in st.session_state: st.session_state.input_file_name = DEFAULT_CSV_PATH
 if 'urls_to_process' not in st.session_state: st.session_state.urls_to_process = []
 if 'total_items' not in st.session_state: st.session_state.total_items = 0
 if 'processed_urls_in_session' not in st.session_state: st.session_state.processed_urls_in_session = set()
 if 'current_index' not in st.session_state: st.session_state.current_index = 0
 if 'session_results' not in st.session_state: st.session_state.session_results = {}
 if 'session_comments' not in st.session_state: st.session_state.session_comments = {}
-if 'default_loaded' not in st.session_state: st.session_state.default_loaded = False
+# default_loaded wird nicht mehr gebraucht
+# if 'default_loaded' not in st.session_state: st.session_state.default_loaded = False
 if 'original_total_items' not in st.session_state: st.session_state.original_total_items = 0
 if 'already_processed_count' not in st.session_state: st.session_state.already_processed_count = 0
 
@@ -209,39 +226,24 @@ st.session_state.labeler_id = labeler_id_input.strip()
 if not st.session_state.labeler_id: st.warning("Bitte Labeler ID eingeben."); st.stop()
 st.divider()
 
-# --- Dateiauswahl und Verarbeitung ---
-uploaded_file = st.file_uploader("1. Optional: Andere CSV hochladen", type=["csv"], key="file_uploader")
-file_input, file_source_name, trigger_processing = None, None, False
-if uploaded_file is not None:
-    if st.session_state.input_file_name != uploaded_file.name or not st.session_state.initialized:
-        file_input, file_source_name, trigger_processing, st.session_state.default_loaded = uploaded_file, uploaded_file.name, True, False
-        print(f"Verwende Upload: {file_source_name}")
-elif not st.session_state.initialized and not st.session_state.default_loaded:
-    if os.path.exists(DEFAULT_CSV_PATH):
-        try:
-            if os.path.getsize(DEFAULT_CSV_PATH) > 0:
-                 file_input, file_source_name, trigger_processing, st.session_state.default_loaded = DEFAULT_CSV_PATH, DEFAULT_CSV_PATH, True, True
-                 print(f"Verwende Standarddatei: {file_source_name}")
-            else: st.info(f"Standarddatei '{DEFAULT_CSV_PATH}' ist leer."); st.session_state.default_loaded = False
-        except OSError as e: st.warning(f"Standarddatei nicht lesbar: {e}"); st.session_state.default_loaded = False
-    else: st.info(f"Standarddatei '{DEFAULT_CSV_PATH}' nicht gefunden."); st.session_state.default_loaded = False
+# --- Dateiverarbeitung (VEREINFACHT) ---
+# Die Verarbeitung wird nur einmal ausgelöst, wenn die App startet und noch nicht initialisiert ist
+trigger_processing = False
+if not st.session_state.initialized:
+    trigger_processing = True
+    print("Triggering initial data processing...")
 
 if trigger_processing and worksheet:
-    print(f"Processing für: {file_source_name}, Labeler: {st.session_state.labeler_id}")
+    print(f"Processing für: {DEFAULT_CSV_PATH}, Labeler: {st.session_state.labeler_id}")
+    # Reset state
     st.session_state.urls_to_process, st.session_state.total_items, st.session_state.processed_urls_in_session = [], 0, set()
     st.session_state.current_index, st.session_state.session_results, st.session_state.session_comments = 0, {}, {}
-    st.session_state.input_file_name, st.session_state.original_total_items, st.session_state.already_processed_count = file_source_name, 0, 0
+    st.session_state.input_file_name = DEFAULT_CSV_PATH # Immer die Standarddatei
+    st.session_state.original_total_items, st.session_state.already_processed_count = 0, 0
 
-    with st.spinner(f"Verarbeite '{file_source_name}' & prüfe Fortschritt..."):
-        all_input_urls_cleaned = []
-        file_obj_for_loading = None
-        try:
-            if isinstance(file_input, str): file_obj_for_loading = open(file_input, 'rb')
-            elif file_input is not None: file_obj_for_loading = file_input
-            if file_obj_for_loading: all_input_urls_cleaned = load_urls_from_input_csv(file_obj_for_loading, source_name=file_source_name)
-        except Exception as e: st.error(f"Fehler beim Öffnen/Lesen: {e}")
-        finally:
-            if isinstance(file_input, str) and file_obj_for_loading and not file_obj_for_loading.closed: file_obj_for_loading.close()
+    with st.spinner(f"Verarbeite '{DEFAULT_CSV_PATH}' & prüfe Fortschritt..."):
+        # Lade URLs direkt aus dem Standardpfad
+        all_input_urls_cleaned = load_urls_from_input_csv(DEFAULT_CSV_PATH, source_name=DEFAULT_CSV_PATH)
 
         if all_input_urls_cleaned:
             st.session_state.original_total_items = len(all_input_urls_cleaned)
@@ -254,17 +256,23 @@ if trigger_processing and worksheet:
             st.session_state.total_items = len(remaining_urls)
             st.session_state.already_processed_count = st.session_state.original_total_items - st.session_state.total_items
             st.session_state.current_index = 0
+            st.session_state.initialized = True # Markiere als initialisiert
 
             if st.session_state.total_items > 0:
                 st.success(f"{st.session_state.original_total_items} URLs gefunden. {st.session_state.already_processed_count} bereits von dir bearbeitet. {st.session_state.total_items} verbleibend.")
-                st.session_state.initialized = True; st.rerun()
+                # Kein Rerun nötig, da dies beim ersten Laden passiert
             else:
                  st.success(f"Super! Alle {st.session_state.original_total_items} URLs bereits von dir bearbeitet.")
-                 st.session_state.initialized = True
+                 # Kein Rerun nötig
         else:
-             st.error(f"Keine gültigen URLs in '{file_source_name}' gefunden.")
-             st.session_state.initialized, st.session_state.default_loaded, st.session_state.input_file_name = False, False, None
-elif trigger_processing and not worksheet: st.error("Sheet-Verbindung fehlgeschlagen."); st.session_state.initialized = False
+             # Wenn die Standarddatei leer ist oder nicht gelesen werden kann
+             st.error(f"Konnte keine gültigen URLs in '{DEFAULT_CSV_PATH}' finden oder Datei fehlt.")
+             # Setze initialized nicht, damit die App nicht weitergeht
+             st.session_state.initialized = False
+elif trigger_processing and not worksheet:
+    st.error("Sheet-Verbindung fehlgeschlagen.");
+    st.session_state.initialized = False # Verhindere weiteres Laden
+
 
 # --- Haupt-Labeling-Interface ---
 if st.session_state.get('initialized', False):
@@ -273,22 +281,22 @@ if st.session_state.get('initialized', False):
     processed_count = st.session_state.already_processed_count
     current_local_idx = st.session_state.current_index
 
+    # Zustand: Alle URLs bearbeitet (entweder direkt nach dem Laden oder im Verlauf)
     if remaining_items <= 0 or current_local_idx >= remaining_items:
         st.success(f"🎉 Super, {st.session_state.labeler_id}! Alle {original_total} URLs bearbeitet!")
         st.balloons()
-        # --- KORRIGIERTER TRY BLOCK ---
         if worksheet:
-            try:
-                st.link_button("Google Sheet öffnen", worksheet.spreadsheet.url)
-            except Exception:
-                pass # Fehler bei Linkerstellung ignorieren
-        # --- ENDE KORREKTUR ---
-        if st.button("Bearbeitung zurücksetzen / Andere Datei"):
-             st.session_state.initialized, st.session_state.input_file_name, st.session_state.default_loaded = False, None, False
-             st.session_state.urls_to_process, st.session_state.total_items, st.session_state.processed_urls_in_session = [], 0, set()
-             st.session_state.current_index, st.session_state.session_results, st.session_state.session_comments = 0, {}, {}
-             st.session_state.original_total_items, st.session_state.already_processed_count = 0, 0
-             st.cache_data.clear(); get_processed_urls_by_labeler.clear(); st.rerun()
+            try: st.link_button("Google Sheet öffnen", worksheet.spreadsheet.url)
+            except Exception: pass
+        # --- Angepasster Reset Button ---
+        if st.button("App neu laden (Fortschritt bleibt)"):
+             # Einfach ein Rerun sollte reichen, da 'initialized' true ist,
+             # wird die Ladelogik nicht erneut getriggert.
+             # Für einen echten Neuladen des Fortschritts:
+             st.session_state.initialized = False # Erzwingt Neuladen beim nächsten Rerun
+             st.cache_data.clear() # Lösche Daten-Caches
+             get_processed_urls_by_labeler.clear() # Lösche Fortschritts-Cache
+             st.rerun() # Löst Neuladen aus
         st.stop()
 
     current_url = st.session_state.urls_to_process[current_local_idx]
@@ -300,7 +308,8 @@ if st.session_state.get('initialized', False):
     else: nav_cols_top[0].button("⬅️ Zurück", key="back_top_disabled", disabled=True, use_container_width=True)
     if original_total > 0:
         current_global_item_number = processed_count + current_local_idx + 1
-        progress_text = f"{st.session_state.labeler_id}: Item {current_global_item_number} / {original_total} ('{st.session_state.input_file_name}')"
+        # Zeige nur den Dateinamen, da er fix ist
+        progress_text = f"{st.session_state.labeler_id}: Item {current_global_item_number} / {original_total} ('{DEFAULT_CSV_PATH}')"
         nav_cols_top[1].progress((processed_count + current_local_idx) / original_total, text=progress_text)
     else: nav_cols_top[1].progress(0, text="Keine Items")
     can_go_forward = (current_local_idx + 1) < remaining_items
@@ -389,25 +398,25 @@ if st.session_state.get('initialized', False):
                 st.session_state.current_index += 1; st.rerun()
             else: st.error("Speichern fehlgeschlagen.")
 
+# --- Fallback-Anzeige, wenn nicht initialisiert ---
 elif not st.session_state.get('initialized', False) and st.session_state.labeler_id:
-    if not worksheet: st.error("GSheet Verbindung fehlgeschlagen.")
-    elif not st.session_state.input_file_name: st.info("Lade CSV oder nutze Standarddatei.")
+    # Zeigt nur Nachrichten an, wenn die Initialisierung fehlgeschlagen ist
+    # Die spezifischen Fehlermeldungen (Datei nicht gefunden, Sheet-Verbindung etc.)
+    # wurden bereits während des trigger_processing-Blocks angezeigt.
+    st.warning("Initialisierung nicht abgeschlossen. Bitte prüfe Fehlermeldungen oben oder im Log.")
 
-# Sidebar
+# --- Sidebar ---
 st.sidebar.header("Info & Status")
-# --- KORRIGIERTER TRY BLOCK (SIDEBAR) ---
 if worksheet:
     st.sidebar.success(f"Verbunden mit: '{connected_sheet_name}'")
     try:
         st.sidebar.page_link(worksheet.spreadsheet.url, label="Sheet öffnen ↗️")
-    except Exception:
-        pass # Fehler bei Linkerstellung ignorieren
-else:
-    st.sidebar.error("Keine GSheet Verbindung.")
-# --- ENDE KORREKTUR ---
+    except Exception: pass
+else: st.sidebar.error("Keine GSheet Verbindung.")
 
 st.sidebar.markdown(f"**Labeler/in:** `{st.session_state.labeler_id or '(fehlt)'}`")
-st.sidebar.markdown(f"**Input:** `{st.session_state.get('input_file_name', '-')}`")
+# Zeige nur den Standard-Dateinamen an
+st.sidebar.markdown(f"**Input-Datei:** `{DEFAULT_CSV_PATH}`")
 st.sidebar.markdown(f"**DB:** Google Sheet | **Format:** `{', '.join(HEADER)}`")
 
 if st.session_state.get('initialized', False):
@@ -428,4 +437,4 @@ else:
 
 st.sidebar.caption(f"GSheet Header: {'OK' if not header_written_flag else 'Aktualisiert'}")
 st.sidebar.caption("Tweet-Vorschauen gecached.")
-st.sidebar.caption("Fortschritt wird beim Laden abgerufen.")
+st.sidebar.caption("Fortschritt wird beim Start abgerufen.")
