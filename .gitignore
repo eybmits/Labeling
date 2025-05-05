@@ -1,0 +1,11 @@
+# Streamlit secrets (NIEMALS HOCHLADEN!)
+.streamlit/secrets.toml
+
+# Optional: Python Caches etc.
+__pycache__/
+*.pyc
+
+# Optional: Virtuelle Umgebung (falls du eine verwendest)
+venv/
+env/
+.env
