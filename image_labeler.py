@@ -11,58 +11,58 @@ import gspread # Für Google Sheets
 from google.oauth2.service_account import Credentials # Für Authentifizierung
 from datetime import datetime # Für Zeitstempel
 import pytz # Für Zeitzonen
+from gspread.exceptions import CellNotFound # Für Fortschritts-Handling
 
 # --- DIES MUSS DER ERSTE STREAMLIT-BEFEHL SEIN ---
-st.set_page_config(layout="wide", page_title="URL-Kategorisierer (Multi-Labeler)")
+st.set_page_config(layout="wide", page_title="URL-Kategorisierer (Buttons)")
 # --- ENDE DES ERSTEN STREAMLIT-BEFEHLS ---
 
-# === Pfad zur Standard-CSV-Datei ===
+# === Pfade und Namen ===
 DEFAULT_CSV_PATH = "input.csv"
+DATA_SHEET_NAME = "Sheet1"
+PROGRESS_SHEET_NAME = "Progress"
 
 # === Google Sheets Setup ===
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/drive']
-
-# NEUE Spaltennamen im Google Sheet (REIHENFOLGE WICHTIG!)
-COL_TS = "Timestamp"
-COL_LBL = "Labeler_ID"
-COL_URL = "URL"
-COL_CATS = "Kategorien"
-COL_COMMENT = "Kommentar"
-HEADER = [COL_TS, COL_LBL, COL_URL, COL_CATS, COL_COMMENT] # Neue Header-Reihenfolge
-
-# Zeitzone für Zeitstempel
+DATA_COL_TS = "Timestamp"; DATA_COL_LBL = "Labeler_ID"; DATA_COL_URL = "URL"; DATA_COL_CATS = "Kategorien"; DATA_COL_COMMENT = "Kommentar"
+DATA_HEADER = [DATA_COL_TS, DATA_COL_LBL, DATA_COL_URL, DATA_COL_CATS, DATA_COL_COMMENT]
+PROG_COL_LBL = "Labeler_ID"; PROG_COL_IDX = "Last_Index"
+PROGRESS_HEADER = [PROG_COL_LBL, PROG_COL_IDX]
 TIMEZONE = pytz.timezone("Europe/Berlin")
 
+# (connect_gsheets Funktion bleibt unverändert wie im vorherigen Skript)
 @st.cache_resource
-def connect_gsheet():
-    """Stellt Verbindung zu Google Sheets her und gibt das Worksheet-Objekt zurück."""
+def connect_gsheets():
+    ws_data = None; ws_progress = None; header_data_written=False; header_progress_written=False
+    sheet_name = "Nicht Verbunden"
     try:
-        creds_dict = st.secrets["google_sheets"]["credentials_dict"]
-        sheet_name = st.secrets["google_sheets"]["sheet_name"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        gc = gspread.authorize(creds)
-        worksheet = gc.open(sheet_name).sheet1
-        header_written = False
-        all_vals = worksheet.get_all_values()
-        if not all_vals or all_vals[0] != HEADER : # Prüfe ob leer ODER Header falsch ist
-             # Lösche alten Inhalt (optional, aber oft sinnvoll bei Schemaänderung)
-             # worksheet.clear()
-             worksheet.insert_row(HEADER, 1, value_input_option='USER_ENTERED') # Füge Header in Zeile 1 ein
-             # Entferne ggf. leere Standardzeilen danach
-             if len(worksheet.get_all_values()) > 1 and all(v == '' for v in worksheet.row_values(2)):
-                 worksheet.delete_rows(2)
-
-             header_written = True
-             st.sidebar.success(f"Header in '{sheet_name}' aktualisiert/geschrieben.")
-
-        return worksheet, header_written, sheet_name
-    except KeyError as e: st.error(f"Secret '{e}' fehlt. Prüfe secrets.toml/Cloud Secrets."); st.stop()
+        creds_dict = st.secrets["google_sheets"]["credentials_dict"]; sheet_name = st.secrets["google_sheets"]["sheet_name"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES); gc = gspread.authorize(creds)
+        spreadsheet = gc.open(sheet_name)
+        try: # Daten Sheet
+            ws_data = spreadsheet.worksheet(DATA_SHEET_NAME); all_vals_data = ws_data.get_all_values()
+            if not all_vals_data or all_vals_data[0] != DATA_HEADER:
+                 ws_data.insert_row(DATA_HEADER, 1, value_input_option='USER_ENTERED')
+                 if len(ws_data.get_all_values()) > 1 and all(v == '' for v in ws_data.row_values(2)): ws_data.delete_rows(2)
+                 header_data_written = True
+        except gspread.exceptions.WorksheetNotFound: st.error(f"Daten-Sheet '{DATA_SHEET_NAME}' fehlt!"); ws_data = None
+        try: # Fortschritt Sheet
+            ws_progress = spreadsheet.worksheet(PROGRESS_SHEET_NAME); all_vals_progress = ws_progress.get_all_values()
+            if not all_vals_progress or all_vals_progress[0] != PROGRESS_HEADER:
+                ws_progress.insert_row(PROGRESS_HEADER, 1, value_input_option='USER_ENTERED')
+                if len(ws_progress.get_all_values()) > 1 and all(v == '' for v in ws_progress.row_values(2)): ws_progress.delete_rows(2)
+                header_progress_written = True
+        except gspread.exceptions.WorksheetNotFound: st.error(f"Fortschritt-Sheet '{PROGRESS_SHEET_NAME}' fehlt!"); ws_progress = None
+        if ws_data and ws_progress: st.sidebar.success(f"Verbunden: '{sheet_name}'");
+        # (Sidebar Infos für Header entfernt für Kürze)
+        return ws_data, ws_progress, sheet_name
+    except KeyError as e: st.error(f"Secret '{e}' fehlt."); st.stop()
     except gspread.exceptions.SpreadsheetNotFound: st.error(f"Sheet '{st.secrets.get('google_sheets', {}).get('sheet_name', '???')}' nicht gefunden."); st.stop()
-    except Exception as e: st.error(f"Fehler bei Google Sheets Verbindung: {e}"); st.stop(); return None, False, None
+    except Exception as e: st.error(f"GSheets Verbindung Fehler: {e}"); st.stop(); return None, None, "Fehler"
 
-worksheet, header_written_flag, connected_sheet_name = connect_gsheet()
+worksheet_data, worksheet_progress, connected_sheet_name = connect_gsheets()
 
-# === Einstellungen ===
+# === Einstellungen & Visuelle Marker ===
 CATEGORIES = {
     "Personal Well-being": ["Lifestyle", "Mental Health", "Physical Health", "Family/Relationships"],
     "Societal Systems": ["Healthcare System", "Education System", "Employment/Economy", "Energy Sector"],
@@ -71,12 +71,20 @@ CATEGORIES = {
 }
 ALL_CATEGORIES = [cat for sublist in CATEGORIES.values() for cat in sublist]
 
-# === Hilfsfunktionen ===
-# `load_processed_urls_gsheet` wird NICHT mehr benötigt, um Input zu filtern!
+# NEU: Visuelle Marker (Emojis oder einfache Symbole)
+CATEGORY_MARKERS = {
+    "Personal Well-being": "❤️",
+    "Societal Systems": "⚙️",
+    "Environment & Events": "🌳",
+    "Other": "⚪", # Einfacher Kreis
+}
+DEFAULT_MARKER = "❓"
 
+# === Hilfsfunktionen ===
+# (load_urls_from_input_csv, save_categorization_gsheet, get_labeler_progress, save_labeler_progress,
+#  clean_tweet_url, get_tweet_embed_html bleiben unverändert wie im vorherigen Skript)
 @st.cache_data
 def load_urls_from_input_csv(file_input_object, source_name="hochgeladene Datei"):
-    """Lädt alle URLs aus einem Datei-Objekt (Upload oder geöffnet)."""
     urls = []
     if not file_input_object: st.error("Kein Datei-Objekt."); return urls
     try:
@@ -84,27 +92,41 @@ def load_urls_from_input_csv(file_input_object, source_name="hochgeladene Datei"
         df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=True)
         url_series = df.iloc[:, 0].dropna().astype(str)
         urls = url_series[url_series.str.startswith(("http://", "https://"))].unique().tolist()
-    except pd.errors.EmptyDataError: st.warning(f"Input '{source_name}' ist leer/enthält keine URLs.")
-    except IndexError: st.warning(f"Input '{source_name}' hat keine Spalten (Format?).")
-    except Exception as e: st.error(f"Fehler beim Lesen von '{source_name}': {e}")
+    except pd.errors.EmptyDataError: st.warning(f"Input '{source_name}' leer/ohne URLs.")
+    except IndexError: st.warning(f"Input '{source_name}' ohne Spalten (Format?).")
+    except Exception as e: st.error(f"Fehler Lesen '{source_name}': {e}")
     return urls
 
-# ANGEPASSTE Speicherfunktion
-def save_categorization_gsheet(worksheet_obj, labeler_id, url, categories_str, comment):
-    """Hängt eine neue Zeile mit Labeler-ID und Zeitstempel an."""
-    if not worksheet_obj: st.error("Keine Sheet-Verbindung zum Speichern."); return False
-    if not labeler_id: st.error("Labeler ID fehlt. Speichern nicht möglich."); return False
-
+def save_categorization_gsheet(ws_data_obj, labeler_id, url, categories_str, comment):
+    if not ws_data_obj: st.error("Keine Daten-Sheet-Verbindung."); return False
+    if not labeler_id: st.error("Labeler ID fehlt."); return False
     try:
-        # Zeitstempel generieren
         now_ts = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z%z')
-        # Daten in der NEUEN Reihenfolge vorbereiten
         data_row = [now_ts, labeler_id, url, categories_str, comment]
-        worksheet_obj.append_row(data_row, value_input_option='USER_ENTERED')
-        # Cache für URLs nicht mehr relevant zum Leeren
+        ws_data_obj.append_row(data_row, value_input_option='USER_ENTERED')
         return True
-    except gspread.exceptions.APIError as e: st.error(f"Sheets API Fehler (Speichern): {e}"); return False
-    except Exception as e: st.error(f"Unerw. Fehler (Speichern): {e}"); return False
+    except Exception as e: st.error(f"Fehler Speichern (Daten): {e}"); return False
+
+@st.cache_data(ttl=60)
+def get_labeler_progress(ws_progress_obj, labeler_id):
+    if not ws_progress_obj or not labeler_id: return 0
+    try:
+        cell = ws_progress_obj.find(labeler_id, in_column=1)
+        last_index = ws_progress_obj.cell(cell.row, 2).value
+        return int(last_index) if last_index and last_index.isdigit() else 0
+    except CellNotFound: return 0
+    except Exception as e: st.warning(f"Fehler Laden Fortschritt '{labeler_id}': {e}"); return 0
+
+def save_labeler_progress(ws_progress_obj, labeler_id, current_index):
+    if not ws_progress_obj or not labeler_id: st.warning("Kann Fortschritt nicht speichern."); return False
+    try:
+        cell = ws_progress_obj.find(labeler_id, in_column=1)
+        ws_progress_obj.update_cell(cell.row, 2, str(current_index))
+        get_labeler_progress.clear(); print(f"Fortschritt für {labeler_id} -> {current_index} gespeichert."); return True
+    except CellNotFound:
+        try: ws_progress_obj.append_row([labeler_id, str(current_index)], value_input_option='USER_ENTERED'); get_labeler_progress.clear(); print(f"Neuer Fortschritt für {labeler_id} -> {current_index} erstellt."); return True
+        except Exception as e: st.error(f"Fehler Hinzufügen Fortschritt '{labeler_id}': {e}"); return False
+    except Exception as e: st.error(f"Fehler Update Fortschritt '{labeler_id}': {e}"); return False
 
 def clean_tweet_url(url):
     cleaned_url = re.sub(r"/(photo|video)/\d+(?=\?|$).*", "", url)
@@ -114,7 +136,6 @@ def clean_tweet_url(url):
 
 @st.cache_data(ttl=3600)
 def get_tweet_embed_html(tweet_url):
-    # (Funktion bleibt unverändert)
     try:
         parsed_url = urlparse(tweet_url)
         if parsed_url.netloc not in ["twitter.com", "x.com", "www.twitter.com", "www.x.com"]: return None
@@ -122,231 +143,264 @@ def get_tweet_embed_html(tweet_url):
     api_url = f"https://publish.twitter.com/oembed?url={tweet_url}&maxwidth=550&omit_script=false&dnt=true"
     try:
         response = requests.get(api_url, timeout=10)
-        response.raise_for_status()
-        return response.json().get("html")
+        response.raise_for_status(); return response.json().get("html")
     except requests.exceptions.Timeout: print(f"Timeout embed: {tweet_url}"); return None
     except requests.exceptions.RequestException as e: status = e.response.status_code if e.response else "N/A"; print(f"Embed fail {status}: {tweet_url}"); return None
     except Exception as e: st.warning(f"Embed error {tweet_url}: {e}", icon="❓"); return None
 
-# === Streamlit App Hauptteil ===
-st.title("📊 URL-Kategorisierer (Multi-Labeler)")
 
-# --- Session State Initialisierung ---
-# Füge labeler_id hinzu
-if 'labeler_id' not in st.session_state:
-    st.session_state.labeler_id = ""
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
-    st.session_state.input_file_name = None
-    st.session_state.urls_to_process = []
-    st.session_state.total_items = 0
-    st.session_state.processed_urls_in_session = set() # Zählt nur für UI-Feedback, nicht für Filterung
-    st.session_state.current_index = 0
-    st.session_state.session_results = {}
-    st.session_state.session_comments = {}
-    st.session_state.default_loaded = False
+# === Streamlit App Hauptteil ===
+st.title("📊 URL-Kategorisierer (Button-Auswahl & Fortschritt)")
+
+# --- Session State ---
+# (Initialisierung bleibt gleich wie im vorherigen Skript)
+if 'labeler_id' not in st.session_state: st.session_state.labeler_id = ""
+if 'initialized' not in st.session_state: st.session_state.initialized = False
+if 'input_file_name' not in st.session_state: st.session_state.input_file_name = None
+if 'urls_to_process' not in st.session_state: st.session_state.urls_to_process = []
+if 'total_items' not in st.session_state: st.session_state.total_items = 0
+if 'processed_urls_in_session' not in st.session_state: st.session_state.processed_urls_in_session = set()
+if 'current_index' not in st.session_state: st.session_state.current_index = 0
+# WICHTIG: session_results speichert jetzt Sets pro Index!
+if 'session_results' not in st.session_state: st.session_state.session_results = {}
+if 'session_comments' not in st.session_state: st.session_state.session_comments = {}
+if 'default_loaded' not in st.session_state: st.session_state.default_loaded = False
+if 'progress_loaded_for_session' not in st.session_state: st.session_state.progress_loaded_for_session = False
 
 # --- Labeler ID Eingabe ---
 labeler_id_input = st.text_input(
-    "👤 Bitte gib deine Labeler ID ein (z.B. Name oder Kürzel):",
-    value=st.session_state.labeler_id,
-    key="labeler_id_widget" # Key, um den Wert wieder zu lesen
+    "👤 Deine Labeler ID:", value=st.session_state.labeler_id, key="labeler_id_widget",
+    on_change=lambda: setattr(st.session_state, 'initialized', False) or setattr(st.session_state, 'progress_loaded_for_session', False)
 )
-# Aktualisiere session state, wenn sich Eingabe ändert
-st.session_state.labeler_id = labeler_id_input
+st.session_state.labeler_id = labeler_id_input.strip()
 
-# --- Nur weitermachen, wenn Labeler ID eingegeben wurde ---
-if not st.session_state.labeler_id:
-    st.warning("Bitte gib zuerst deine Labeler ID oben ein, um zu starten.")
-    st.stop() # Hält die App hier an
-
+if not st.session_state.labeler_id: st.warning("Bitte Labeler ID eingeben."); st.stop()
+if not worksheet_data or not worksheet_progress: st.error("Sheet-Verbindung(en) fehlen."); st.stop()
 st.divider()
 
-# --- Dateiauswahl und Verarbeitung (angepasst) ---
-uploaded_file = st.file_uploader(
-    "1. Optional: Lade eine andere CSV hoch (überschreibt Standard)",
-    type=["csv"]
-)
-
-file_input = None
-file_source_name = None
-trigger_processing = False
-
+# --- Dateiauswahl & Verarbeitung ---
+# (Bleibt gleich wie im vorherigen Skript)
+uploaded_file = st.file_uploader("1. Optional: Andere CSV hochladen", type=["csv"])
+file_input = None; file_source_name = None; trigger_processing = False
 if uploaded_file is not None:
-    # Hochgeladene Datei hat Priorität
     if st.session_state.input_file_name != uploaded_file.name or not st.session_state.initialized:
-        file_input = uploaded_file
-        file_source_name = uploaded_file.name
-        trigger_processing = True
-        st.session_state.default_loaded = False
+        file_input = uploaded_file; file_source_name = uploaded_file.name; trigger_processing = True; st.session_state.default_loaded = False
 elif not st.session_state.initialized and not st.session_state.default_loaded:
-    # Versuche Standard, wenn nicht initialisiert/default geladen
-    if os.path.exists(DEFAULT_CSV_PATH):
-        file_input = DEFAULT_CSV_PATH
-        file_source_name = DEFAULT_CSV_PATH
-        trigger_processing = True
-        st.session_state.default_loaded = True
-    else:
-        st.info(f"Standarddatei '{DEFAULT_CSV_PATH}' nicht gefunden. Lade eine CSV hoch.")
+    if os.path.exists(DEFAULT_CSV_PATH): file_input = DEFAULT_CSV_PATH; file_source_name = DEFAULT_CSV_PATH; trigger_processing = True; st.session_state.default_loaded = True
+    else: st.info(f"Standard '{DEFAULT_CSV_PATH}' fehlt. Bitte hochladen.")
 
-if trigger_processing and worksheet:
-    # Reset für neue Datei
-    st.session_state.initialized = False
-    st.session_state.urls_to_process = []
-    st.session_state.total_items = 0
-    st.session_state.processed_urls_in_session = set()
-    st.session_state.current_index = 0
-    st.session_state.session_results = {}
-    st.session_state.session_comments = {}
+if trigger_processing and worksheet_data and worksheet_progress:
+    st.session_state.initialized = False; st.session_state.urls_to_process = []; st.session_state.total_items = 0
+    st.session_state.processed_urls_in_session = set(); st.session_state.current_index = 0
+    st.session_state.session_results = {}; st.session_state.session_comments = {}; st.session_state.progress_loaded_for_session = False
     st.session_state.input_file_name = file_source_name
-
     with st.spinner(f"Verarbeite '{file_source_name}'..."):
         all_input_urls = []
-        if isinstance(file_input, str): # Standarddatei Pfad
+        if isinstance(file_input, str): # Default
             try:
-                with open(file_input, 'rb') as f_default:
-                    all_input_urls = load_urls_from_input_csv(f_default, source_name=file_source_name)
-            except Exception as e: st.error(f"Fehler Lesen Standarddatei '{file_source_name}': {e}")
-        elif file_input is not None: # UploadedFile Objekt
+                with open(file_input, 'rb') as f_default: all_input_urls = load_urls_from_input_csv(f_default, source_name=file_source_name)
+            except Exception as e: st.error(f"Fehler Lesen '{file_source_name}': {e}")
+        elif file_input is not None: # Upload
             all_input_urls = load_urls_from_input_csv(file_input, source_name=file_source_name)
-
         if all_input_urls:
-            # !!! WICHTIG: NICHT MEHR GEGEN GOOGLE SHEET FILTERN !!!
-            st.session_state.urls_to_process = all_input_urls
-            # Optional: Mischen, wenn gewünscht, dass jeder eine andere Reihenfolge bekommt
-            # random.shuffle(st.session_state.urls_to_process)
-            st.session_state.total_items = len(st.session_state.urls_to_process)
-            st.session_state.current_index = 0
-            st.success(f"{st.session_state.total_items} URLs aus '{file_source_name}' geladen. Bereit zum Labeln für '{st.session_state.labeler_id}'.")
-            st.session_state.initialized = True
-        else:
-             st.error(f"Datei '{file_source_name}' enthält keine gültigen URLs oder konnte nicht gelesen werden.")
-             st.session_state.initialized = False
-             st.session_state.default_loaded = False
-elif trigger_processing and not worksheet:
-     st.error("Sheet-Verbindung fehlgeschlagen."); st.session_state.initialized = False; st.session_state.default_loaded = False
+            st.session_state.urls_to_process = all_input_urls; st.session_state.total_items = len(all_input_urls)
+            st.session_state.current_index = 0; st.session_state.initialized = True
+            st.info(f"{st.session_state.total_items} URLs aus '{file_source_name}' geladen für '{st.session_state.labeler_id}'. Lade Fortschritt...")
+        else: st.error(f"'{file_source_name}' ohne URLs/Fehler."); st.session_state.initialized=False; st.session_state.default_loaded=False
+
+# --- Fortschritt laden ---
+# (Bleibt gleich wie im vorherigen Skript)
+if st.session_state.initialized and not st.session_state.progress_loaded_for_session:
+    if worksheet_progress and st.session_state.labeler_id:
+        with st.spinner("Lade Fortschritt..."):
+            saved_index = get_labeler_progress(worksheet_progress, st.session_state.labeler_id)
+            st.session_state.current_index = min(saved_index, st.session_state.total_items)
+            st.session_state.progress_loaded_for_session = True
+            st.success(f"Fortschritt geladen. Starte bei Link {st.session_state.current_index + 1}.")
+            st.rerun()
+    else: st.session_state.current_index = 0; st.session_state.progress_loaded_for_session = True
+
 
 # --- Haupt-Labeling-Interface ---
-if st.session_state.get('initialized', False) and st.session_state.urls_to_process:
+if st.session_state.initialized and st.session_state.progress_loaded_for_session and st.session_state.urls_to_process:
     total_items = st.session_state.total_items
-    if st.session_state.current_index >= total_items:
-        st.success(f"🎉 Super, {st.session_state.labeler_id}! Du hast alle {total_items} URLs aus '{st.session_state.input_file_name}' bearbeitet!")
-        st.balloons()
-        st.info(f"Deine Ergebnisse wurden im Google Sheet '{connected_sheet_name}' gespeichert.")
-        if worksheet:
-            try: sheet_url = worksheet.spreadsheet.url; st.link_button("Google Sheet öffnen", sheet_url)
-            except Exception: pass
+    current_idx = st.session_state.current_index
+
+    # --- Prüfen ob fertig ---
+    # (Bleibt gleich wie im vorherigen Skript)
+    if current_idx >= total_items:
+        st.success(f"🎉 Super, {st.session_state.labeler_id}! Alle {total_items} URLs aus '{st.session_state.input_file_name}' bearbeitet!")
+        st.balloons(); st.info(f"Ergebnisse in Sheet '{connected_sheet_name}' gespeichert.")
+        # (Links zu Sheets bleiben gleich)
+        if worksheet_data: try: sheet_url=worksheet_data.spreadsheet.url; st.link_button("Daten-Sheet öffnen",sheet_url)
+        except: pass
+        if worksheet_progress: try: sheet_url=worksheet_progress.spreadsheet.url; st.link_button("Fortschritt-Sheet öffnen",sheet_url)
+        except: pass
         if st.button("Bearbeitung zurücksetzen / Andere Datei laden"):
-             st.session_state.initialized = False
-             st.session_state.input_file_name = None
-             st.session_state.default_loaded = False
-             st.session_state.urls_to_process = [] # Wichtig
-             st.session_state.total_items = 0
-             st.session_state.processed_urls_in_session = set()
-             st.session_state.current_index = 0
-             st.session_state.session_results = {}
-             st.session_state.session_comments = {}
-             # Labeler ID bleibt erhalten für die Sitzung
-             st.rerun()
+             st.session_state.initialized=False; st.session_state.input_file_name=None; st.session_state.default_loaded=False
+             st.session_state.urls_to_process=[]; st.session_state.total_items=0; st.session_state.processed_urls_in_session=set()
+             st.session_state.current_index=0; st.session_state.session_results={}; st.session_state.session_comments={}
+             st.session_state.progress_loaded_for_session=False; st.rerun()
         st.stop()
 
-    current_idx = st.session_state.current_index
     # --- Navigation und Fortschritt ---
+    # (Bleibt gleich wie im vorherigen Skript)
     nav_cols_top = st.columns([1, 3, 1])
     if current_idx > 0:
         if nav_cols_top[0].button("⬅️ Zurück", key="back_top", use_container_width=True): st.session_state.current_index -= 1; st.rerun()
     else: nav_cols_top[0].button("⬅️ Zurück", key="back_top_disabled", disabled=True, use_container_width=True)
-    progress_text = f"{st.session_state.labeler_id}: Link {current_idx + 1} von {total_items} (aus '{st.session_state.input_file_name}')"
+    progress_text = f"{st.session_state.labeler_id}: Link {current_idx + 1} von {total_items} ('{st.session_state.input_file_name}')"
     nav_cols_top[1].progress((current_idx + 1) / total_items, text=progress_text)
     st.divider()
 
-    # --- URL Anzeige & Einbettung (unverändert) ---
+    # --- URL Anzeige & Einbettung ---
+    # (Bleibt gleich wie im vorherigen Skript)
     current_url = st.session_state.urls_to_process[current_idx]
     st.subheader("Post Vorschau / Link")
-    base_tweet_url = clean_tweet_url(current_url)
-    embed_html = get_tweet_embed_html(base_tweet_url)
-    if embed_html:
-        st.components.v1.html(embed_html, height=650, scrolling=True)
-        if base_tweet_url != current_url: st.caption(f"Original-URL (bereinigt): [{current_url}]({current_url})")
-    else:
-        st.markdown(f"**URL:** [{current_url}]({current_url})")
-        if "twitter.com" in current_url or "x.com" in current_url: st.caption("Vorschau nicht verfügbar.")
-        else: st.caption("Vorschau nur für X/Twitter Links.")
-        st.link_button("Link in neuem Tab öffnen", current_url)
+    base_tweet_url = clean_tweet_url(current_url); embed_html = get_tweet_embed_html(base_tweet_url)
+    if embed_html: st.components.v1.html(embed_html, height=650, scrolling=True);
+    if base_tweet_url != current_url: st.caption(f"Original: [{current_url}]({current_url})")
+    else: st.markdown(f"**URL:** [{current_url}]({current_url})"); st.link_button("Link in neuem Tab öffnen", current_url)
     st.divider()
 
-    # --- Kategorieauswahl & Kommentar (unverändert)---
-    st.subheader("Kategorisierung")
-    col1, col2 = st.columns([3, 2])
-    with col1:
-        st.markdown("**Wähle passende Kategorien:**")
-        selected_categories_in_widgets = []
-        default_selection = st.session_state.session_results.get(current_idx, [])
+    # --- === Kategorieauswahl mit BUTTONS === ---
+    st.subheader("Kategorisierung (Klicke Buttons zum Auswählen)")
+    col1_cat, col2_com = st.columns([3, 2]) # Spalten für Kategorien und Kommentar
+
+    # Hole die aktuelle Auswahl für diesen Index aus dem Session State (als Set!)
+    # Initialisiere mit leerem Set, falls noch nichts für diesen Index ausgewählt wurde
+    current_selection_set = st.session_state.session_results.get(current_idx, set())
+
+    with col1_cat:
+        cols_per_row = 4 # Wie viele Buttons pro Zeile? Anpassen nach Bedarf
         for main_topic, sub_categories in CATEGORIES.items():
-            with st.expander(f"**{main_topic}**", expanded=True):
-                expander_key = f"multiselect_{current_idx}_{main_topic.replace(' ', '_').replace('&','_').replace('/','_')}"
-                current_selection = st.multiselect(" ",options=sub_categories,default=[cat for cat in default_selection if cat in sub_categories],key=expander_key,label_visibility="collapsed")
-                selected_categories_in_widgets.extend(current_selection)
-        selected_categories_in_widgets = sorted(list(set(selected_categories_in_widgets)))
-        if selected_categories_in_widgets: st.write("**Ausgewählt:**"); st.info(", ".join(selected_categories_in_widgets))
-        else: st.write("_Keine Kategorien ausgewählt._")
-    with col2:
+            marker = CATEGORY_MARKERS.get(main_topic, DEFAULT_MARKER)
+            # Expander für jede Hauptkategorie
+            with st.expander(f"**{marker} {main_topic}**", expanded=True):
+                # Erzeuge Spalten für das Button-Layout
+                button_cols = st.columns(cols_per_row)
+                col_idx = 0
+                for category in sub_categories:
+                    # Prüfe, ob diese Kategorie aktuell ausgewählt ist
+                    is_selected = category in current_selection_set
+                    button_type = "primary" if is_selected else "secondary"
+                    button_label = f"{category}" # Nur Kategorie-Name auf Button
+                    button_key = f"btn_{current_idx}_{main_topic}_{category}".replace(' ', '_').replace('/', '_').replace('&','_') # Eindeutiger Key
+
+                    # Platziere Button in der nächsten Spalte
+                    with button_cols[col_idx % cols_per_row]:
+                        if st.button(button_label, key=button_key, type=button_type, use_container_width=True):
+                            # --- Button Click Logic ---
+                            # Kopiere das Set oder erstelle es neu, um es zu ändern
+                            temp_selection_set = current_selection_set.copy()
+                            if is_selected:
+                                temp_selection_set.discard(category) # Entferne, wenn schon drin
+                            else:
+                                temp_selection_set.add(category) # Füge hinzu, wenn nicht drin
+                            # Aktualisiere den Session State für diesen Index
+                            st.session_state.session_results[current_idx] = temp_selection_set
+                            # Lade die UI neu, um Button-Stil zu aktualisieren
+                            st.rerun()
+                    col_idx += 1 # Gehe zur nächsten Spalte
+
+        # Zeige die aktuelle Auswahl unterhalb der Expander an
+        st.markdown("---") # Trennlinie
+        selected_categories_list = sorted(list(current_selection_set)) # Hol die aktuelle Auswahl als Liste
+        if selected_categories_list:
+            st.write("**Ausgewählt:**")
+            # Gruppiere nach Hauptkategorie für bessere Übersicht
+            grouped_selection_str = []
+            for main_topic, sub_cats in CATEGORIES.items():
+                marker = CATEGORY_MARKERS.get(main_topic, DEFAULT_MARKER)
+                selected_in_group = [cat for cat in selected_categories_list if cat in sub_cats]
+                if selected_in_group:
+                    grouped_selection_str.append(f"**{marker} {main_topic}:** {', '.join(selected_in_group)}")
+            st.info("\n\n".join(grouped_selection_str)) # Zeilenumbruch zwischen Gruppen
+            # st.info(", ".join(selected_categories_list)) # Alternative: Einfache Liste
+        else:
+            st.write("_Keine Kategorien ausgewählt._")
+
+    # --- Kommentarfeld ---
+    with col2_com:
         default_comment = st.session_state.session_comments.get(current_idx, "")
         comment_key = f"comment_{current_idx}"
-        comment = st.text_area("Optionaler Kommentar:", value=default_comment, height=200, key=comment_key)
+        comment = st.text_area("Optionaler Kommentar:", value=default_comment, height=350, key=comment_key) # Höhe angepasst
     st.divider()
+
 
     # --- Navigationsbuttons (Unten) ---
     nav_cols_bottom = st.columns(7)
     if current_idx > 0:
-        if nav_cols_bottom[0].button("⬅️ Zurück", key="back_bottom", use_container_width=True): st.session_state.session_results[current_idx]=selected_categories_in_widgets; st.session_state.session_comments[current_idx]=comment; st.session_state.current_index -= 1; st.rerun()
+        if nav_cols_bottom[0].button("⬅️ Zurück", key="back_bottom", use_container_width=True):
+            # Speichere Kommentar VOR dem Zurückgehen
+            st.session_state.session_comments[current_idx] = comment
+            st.session_state.current_index -= 1; st.rerun()
     else: nav_cols_bottom[0].button("⬅️ Zurück", key="back_bottom_disabled", disabled=True, use_container_width=True)
-    # Speichern & Weiter (ruft angepasste Speicherfunktion auf)
+
     if nav_cols_bottom[6].button("Speichern & Weiter ➡️", type="primary", key="save_next_bottom", use_container_width=True):
-        current_labeler_id = st.session_state.labeler_id # Hole aktuelle ID
-        if not selected_categories_in_widgets: st.warning("Bitte wähle mindestens eine Kategorie aus.")
-        elif not worksheet: st.error("Keine Verbindung zum Google Sheet zum Speichern.")
-        elif not current_labeler_id: st.error("Labeler ID nicht gesetzt. Bitte oben eingeben.")
+        current_labeler_id = st.session_state.labeler_id
+        # Hole die FINALE Auswahl für diesen Index aus dem Session State
+        final_selection_set = st.session_state.session_results.get(current_idx, set())
+
+        if not final_selection_set: st.warning("Bitte wähle mindestens eine Kategorie aus.")
+        elif not worksheet_data or not worksheet_progress: st.error("Sheet-Verbindung(en) fehlen.")
+        elif not current_labeler_id: st.error("Labeler ID fehlt.")
         else:
-            categories_str = "; ".join(selected_categories_in_widgets)
-            # Rufe die NEUE Speicherfunktion mit Labeler ID auf
-            if save_categorization_gsheet(worksheet, current_labeler_id, current_url, categories_str, comment):
-                st.session_state.session_results[current_idx] = selected_categories_in_widgets
-                st.session_state.session_comments[current_idx] = comment
-                st.session_state.processed_urls_in_session.add(current_idx) # Zähle Index als in Session bearbeitet
-                st.session_state.current_index += 1
-                st.rerun()
-            else: st.error("Speichern in Google Sheet fehlgeschlagen.")
+            # Konvertiere Set zu String für Speicherung
+            categories_str = "; ".join(sorted(list(final_selection_set)))
+            final_comment = comment # Kommentar direkt aus Widget lesen
+
+            # 1. Speichere die Kategorisierungsdaten
+            if save_categorization_gsheet(worksheet_data, current_labeler_id, current_url, categories_str, final_comment):
+                # Speichere Kommentar im Session State (für Zurück-Funktion wichtig!)
+                st.session_state.session_comments[current_idx] = final_comment
+                # (Selektionen sind schon im Session State durch Button-Klicks)
+                st.session_state.processed_urls_in_session.add(current_idx) # Zähle als in Session bearbeitet
+
+                # 2. Erhöhe den Index für den NÄCHSTEN Durchlauf
+                next_index = current_idx + 1
+
+                # 3. Speichere den NEUEN Index als Fortschritt
+                if save_labeler_progress(worksheet_progress, current_labeler_id, next_index):
+                    # 4. Aktualisiere Session State und lade neu
+                    st.session_state.current_index = next_index
+                    st.rerun()
+                else:
+                    st.error("Kategorisierung gespeichert, aber Fortschritt konnte NICHT gespeichert werden.")
+            else: st.error("Speichern der Kategorisierung fehlgeschlagen.")
 
 # --- Fallback-Anzeige ---
-elif not st.session_state.get('initialized', False) and uploaded_file is None and not st.session_state.get('default_loaded', False):
-    if worksheet and st.session_state.labeler_id: # Nur wenn ID da ist und Sheet verbunden
-        st.info(f"Versuche, Standarddatei '{DEFAULT_CSV_PATH}' zu laden oder lade eine andere CSV hoch.")
+# (Bleibt gleich wie im vorherigen Skript)
+elif not st.session_state.initialized and uploaded_file is None and not st.session_state.default_loaded:
+    if worksheet_data and worksheet_progress and st.session_state.labeler_id:
+        st.info(f"Warte auf Datei-Upload oder Standarddatei '{DEFAULT_CSV_PATH}'.")
+
 
 # --- Sidebar ---
+# (Bleibt gleich wie im vorherigen Skript, zeigt Metriken etc.)
 st.sidebar.header("Info & Status")
-if worksheet:
+if worksheet_data and worksheet_progress:
     st.sidebar.success(f"Verbunden mit: '{connected_sheet_name}'")
-    # Header Check Nachricht entfernt, da sie oben steht
-    try: sheet_url = worksheet.spreadsheet.url; st.sidebar.page_link(sheet_url, label="Sheet öffnen ↗️")
-    except Exception: pass
-else: st.sidebar.error("Keine Verbindung zum Google Sheet.")
+    try: sheet_url=worksheet_data.spreadsheet.url; st.sidebar.page_link(sheet_url, label="Daten-Sheet ↗️")
+    except: pass
+    try: sheet_url=worksheet_progress.spreadsheet.url; st.sidebar.page_link(sheet_url, label="Fortschritt-Sheet ↗️")
+    except: pass
+else: st.sidebar.error("Sheet-Verbindung(en) fehlen.")
 
-st.sidebar.markdown(f"**Aktuelle/r Labeler/in:** `{st.session_state.labeler_id or '(Bitte oben eingeben)'}`")
-
+st.sidebar.markdown(f"**Labeler/in:** `{st.session_state.labeler_id or '(Bitte eingeben)'}`")
 current_input_info = st.session_state.get('input_file_name', None)
 if current_input_info: st.sidebar.markdown(f"**Input-Datei:** `{current_input_info}`")
 else: st.sidebar.markdown("**Input-Datei:** -")
 
 st.sidebar.markdown(f"**Datenbank:** Google Sheet")
-st.sidebar.markdown(f"**Format Sheet:** Spalten `{', '.join(HEADER)}`")
-st.sidebar.markdown("**Fortschritt:** Jedes Labeling wird als neue Zeile gespeichert.")
-if st.session_state.get('initialized', False):
-    # Angepasste Metriken
+st.sidebar.markdown(f"**Format Daten:** `{', '.join(DATA_HEADER)}`")
+st.sidebar.markdown(f"**Format Fortschritt:** `{', '.join(PROGRESS_HEADER)}`")
+st.sidebar.markdown("**Fortschritt:** Wird gespeichert & geladen.")
+if st.session_state.initialized and st.session_state.progress_loaded_for_session:
     total_urls_in_file = st.session_state.total_items
-    labeled_in_session = len(st.session_state.processed_urls_in_session)
+    current_pos = st.session_state.current_index
     st.sidebar.metric("URLs in Datei", total_urls_in_file)
-    st.sidebar.metric("Gelabelt (diese Sitzung)", labeled_in_session)
+    st.sidebar.metric("Aktuelle Position", f"{current_pos + 1} / {total_urls_in_file}" if total_urls_in_file > 0 else "-")
 else:
     st.sidebar.metric("URLs in Datei", "-")
-    st.sidebar.metric("Gelabelt (diese Sitzung)", "-")
+    st.sidebar.metric("Aktuelle Position", "-")
