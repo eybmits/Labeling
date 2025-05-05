@@ -69,38 +69,23 @@ def connect_gsheet():
 worksheet, header_written_flag, connected_sheet_name = connect_gsheet()
 
 # === Einstellungen ===
-# Struktur der Kategorien
 CATEGORIES = {
     "Health": ["Lifestyle", "Mental Health", "Physical Health", "Healthcare System"],
-    "Social": ["Education", "Family/Relationships", "Employment/Economy"], # Typo korrigiert
+    "Social": ["Education", "Family/Relationships", "Employment/Economy"],
     "Environment": ["Environmental Policies", "Energy Sector", "Natural/Man-made Disasters"],
 }
 ALL_CATEGORIES = [cat for sublist in CATEGORIES.values() for cat in sublist]
 
-# Farben für Hauptkategorien (werden für die H5-Überschriften verwendet)
 CATEGORY_COLORS = {
     "Health": "dodgerblue",
     "Social": "mediumseagreen",
     "Environment": "darkorange",
 }
 
-# --- NEU: Farben für JEDE Unterkategorie ---
-# Wichtig: Jede Kategorie aus CATEGORIES muss hier einen Eintrag haben!
 SUBCATEGORY_COLORS = {
-    # Health
-    "Lifestyle": "skyblue",
-    "Mental Health": "lightcoral",
-    "Physical Health": "mediumaquamarine",
-    "Healthcare System": "steelblue", # Anderes Blau zur Unterscheidung
-    # Social
-    "Education": "sandybrown",
-    "Family/Relationships": "lightpink", # Korrigierter Typo-Schlüssel
-    "Employment/Economy": "khaki",
-    # Environment
-    "Environmental Policies": "mediumseagreen", # Kann gleiche Farbe wie Hauptkategorie haben
-    "Energy Sector": "gold",
-    "Natural/Man-made Disasters": "slategray",
-    # Fallback-Farbe, falls eine Kategorie fehlen sollte
+    "Lifestyle": "skyblue", "Mental Health": "lightcoral", "Physical Health": "mediumaquamarine", "Healthcare System": "steelblue",
+    "Education": "sandybrown", "Family/Relationships": "lightpink", "Employment/Economy": "khaki",
+    "Environmental Policies": "mediumseagreen", "Energy Sector": "gold", "Natural/Man-made Disasters": "slategray",
     "DEFAULT_COLOR": "grey"
 }
 
@@ -203,7 +188,6 @@ def get_tweet_embed_html(tweet_url):
 st.title("📊 URL-Kategorisierer (Multi-Labeler)")
 
 # --- Session State Initialisierung ---
-# (Keine Änderungen hier nötig)
 if 'labeler_id' not in st.session_state: st.session_state.labeler_id = ""
 if 'initialized' not in st.session_state: st.session_state.initialized = False
 if 'input_file_name' not in st.session_state: st.session_state.input_file_name = None
@@ -244,7 +228,6 @@ elif not st.session_state.initialized and not st.session_state.default_loaded:
 
 if trigger_processing and worksheet:
     print(f"Processing für: {file_source_name}, Labeler: {st.session_state.labeler_id}")
-    # Reset state
     st.session_state.urls_to_process, st.session_state.total_items, st.session_state.processed_urls_in_session = [], 0, set()
     st.session_state.current_index, st.session_state.session_results, st.session_state.session_comments = 0, {}, {}
     st.session_state.input_file_name, st.session_state.original_total_items, st.session_state.already_processed_count = file_source_name, 0, 0
@@ -293,8 +276,13 @@ if st.session_state.get('initialized', False):
     if remaining_items <= 0 or current_local_idx >= remaining_items:
         st.success(f"🎉 Super, {st.session_state.labeler_id}! Alle {original_total} URLs bearbeitet!")
         st.balloons()
-        if worksheet: try: st.link_button("Google Sheet öffnen", worksheet.spreadsheet.url)
-                      except Exception: pass
+        # --- KORRIGIERTER TRY BLOCK ---
+        if worksheet:
+            try:
+                st.link_button("Google Sheet öffnen", worksheet.spreadsheet.url)
+            except Exception:
+                pass # Fehler bei Linkerstellung ignorieren
+        # --- ENDE KORREKTUR ---
         if st.button("Bearbeitung zurücksetzen / Andere Datei"):
              st.session_state.initialized, st.session_state.input_file_name, st.session_state.default_loaded = False, None, False
              st.session_state.urls_to_process, st.session_state.total_items, st.session_state.processed_urls_in_session = [], 0, set()
@@ -347,7 +335,6 @@ if st.session_state.get('initialized', False):
     with col1:
         st.markdown("**Wähle passende Kategorien:**")
         for main_topic, sub_categories in CATEGORIES.items():
-            # Hauptkategorie-Überschrift mit ihrer Farbe
             main_color = CATEGORY_COLORS.get(main_topic, "black")
             st.markdown(f'<h5 style="color:{main_color}; border-bottom: 2px solid {main_color}; margin-top: 15px; margin-bottom: 10px;">{main_topic}</h5>', unsafe_allow_html=True)
             num_columns = 2
@@ -359,25 +346,20 @@ if st.session_state.get('initialized', False):
                 is_checked_default = sub_cat in saved_selection
                 current_col = checkbox_cols[col_index % num_columns]
                 with current_col:
-                    # Checkbox selbst hat keine Farbe, aber der Tag unten wird gefärbt
                     is_checked_now = st.checkbox(sub_cat, value=is_checked_default, key=checkbox_key)
                     if is_checked_now: selected_categories_in_widgets.append(sub_cat)
                 col_index += 1
         st.markdown("---")
         selected_categories_in_widgets = sorted(list(set(selected_categories_in_widgets)))
 
-        # --- ANZEIGE DER AUSGEWÄHLTEN TAGS (MIT INDIVIDUELLEN FARBEN) ---
         if selected_categories_in_widgets:
             st.write("**Ausgewählt:**")
             display_tags = []
             for cat in selected_categories_in_widgets:
-                 # Hole Farbe direkt aus SUBCATEGORY_COLORS
                  cat_color = SUBCATEGORY_COLORS.get(cat, SUBCATEGORY_COLORS.get("DEFAULT_COLOR", "grey"))
-                 # Erstelle Tag
                  display_tags.append(f'<span style="display: inline-block; color: {cat_color}; border: 1px solid {cat_color}; border-radius: 5px; padding: 2px 6px; margin: 2px; font-size: 0.9em;">{cat}</span>')
             st.markdown(" ".join(display_tags), unsafe_allow_html=True)
         else: st.write("_Keine Kategorien ausgewählt._")
-        # --- ENDE TAG ANZEIGE ---
 
     with col2:
         default_comment = st.session_state.session_comments.get(current_local_idx, "")
@@ -413,11 +395,17 @@ elif not st.session_state.get('initialized', False) and st.session_state.labeler
 
 # Sidebar
 st.sidebar.header("Info & Status")
+# --- KORRIGIERTER TRY BLOCK (SIDEBAR) ---
 if worksheet:
     st.sidebar.success(f"Verbunden mit: '{connected_sheet_name}'")
-    try: st.sidebar.page_link(worksheet.spreadsheet.url, label="Sheet öffnen ↗️")
-    except Exception: pass
-else: st.sidebar.error("Keine GSheet Verbindung.")
+    try:
+        st.sidebar.page_link(worksheet.spreadsheet.url, label="Sheet öffnen ↗️")
+    except Exception:
+        pass # Fehler bei Linkerstellung ignorieren
+else:
+    st.sidebar.error("Keine GSheet Verbindung.")
+# --- ENDE KORREKTUR ---
+
 st.sidebar.markdown(f"**Labeler/in:** `{st.session_state.labeler_id or '(fehlt)'}`")
 st.sidebar.markdown(f"**Input:** `{st.session_state.get('input_file_name', '-')}`")
 st.sidebar.markdown(f"**DB:** Google Sheet | **Format:** `{', '.join(HEADER)}`")
