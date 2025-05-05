@@ -1,5 +1,6 @@
 streamlit
 pandas
 requests
-gspread >= 5.0.0
-google-auth >= 1.30.0
+gspread # Mindestens diese Zeile!
+google-auth
+pytz # Diese hattest du auch hinzugefügt
