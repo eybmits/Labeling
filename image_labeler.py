@@ -24,7 +24,6 @@ DEFAULT_CSV_PATH = "input.csv" # Diese Datei wird IMMER verwendet
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/drive']
 
 # Spaltennamen im Google Sheet (REIHENFOLGE WICHTIG!)
-COL_TS = "Timestamp"
 COL_LBL = "Labeler_ID"
 COL_URL = "URL"
 COL_CATS = "Kategorien"
