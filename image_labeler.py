@@ -95,21 +95,71 @@ CATEGORY_COLORS = {
 }
 
 # === Hilfsfunktionen ===
+
+# --- NEUE, ROBUSTERE VERSION ---
 @st.cache_data
 def load_urls_from_input_csv(file_input_object, source_name="hochgeladene Datei"):
-    """Lädt alle URLs aus einem Datei-Objekt (Upload oder geöffnet)."""
+    """Lädt alle URLs aus einem Datei-Objekt (Upload oder geöffnet) und bereinigt sie."""
     urls = []
     if not file_input_object: st.error("Kein Datei-Objekt."); return urls
     try:
         if hasattr(file_input_object, 'seek'): file_input_object.seek(0)
-        df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=True)
-        url_series = df.iloc[:, 0].dropna().astype(str)
-        # Striktere URL-Validierung (optional, kann angepasst werden)
-        urls = url_series[url_series.str.match(r'^https?://\S+$')].unique().tolist()
+        # Lese ALLE Zeilen der ersten Spalte, bevor gedropped wird
+        # Versuche Encoding robust zu gestalten
+        try:
+            df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=False, encoding='utf-8')
+        except UnicodeDecodeError:
+            st.warning(f"Konnte '{source_name}' nicht als UTF-8 lesen, versuche latin-1...")
+            if hasattr(file_input_object, 'seek'): file_input_object.seek(0) # Zurücksetzen für erneuten Leseversuch
+            df = pd.read_csv(file_input_object, header=None, usecols=[0], skip_blank_lines=False, encoding='latin-1')
+
+        print(f"DEBUG: CSV gelesen, {len(df)} Zeilen insgesamt in Spalte 0.")
+
+        url_series_raw = df.iloc[:, 0]
+        # print(f"DEBUG: Rohdaten Spalte 0 (erste 5): \n{url_series_raw.head()}") # Optional: Weniger Output
+
+        # Schritt 1: Zu String konvertieren (wichtig VOR String-Operationen)
+        url_series_str = url_series_raw.astype(str)
+        print(f"DEBUG: Nach astype(str), {len(url_series_str)} Zeilen.")
+
+        # Schritt 2: NaN oder 'nan'-Strings entfernen, die nach Konvertierung entstehen könnten
+        url_series_nonan = url_series_str.replace('nan', pd.NA).dropna()
+        print(f"DEBUG: Nach dropna() (NaN und 'nan'-Strings), {len(url_series_nonan)} Zeilen übrig.")
+
+        # Schritt 3: Whitespace entfernen (SEHR WICHTIG!)
+        # .strip() entfernt Leerzeichen, Tabs, Newlines, und auch non-breaking spaces (\xa0) von Anfang/Ende
+        url_series_stripped = url_series_nonan.str.strip()
+        print(f"DEBUG: Nach strip() (Whitespace entfernt), {len(url_series_stripped)} Zeilen übrig.")
+
+        # Schritt 4: Leere Strings entfernen, die durch strip() entstanden sein könnten
+        url_series_noempty = url_series_stripped[url_series_stripped != '']
+        print(f"DEBUG: Nach Entfernung leerer Strings, {len(url_series_noempty)} Zeilen übrig.")
+
+        # Schritt 5: Filterung auf http/https (Regex)
+        # Das Regex prüft: ^(Start), http(s?)://, gefolgt von \S+ (ein oder mehr Nicht-Whitespace-Zeichen), $(Ende)
+        url_series_filtered = url_series_noempty[url_series_noempty.str.match(r'^https?://\S+$')]
+        print(f"DEBUG: Nach Regex-Filter (http/https), {len(url_series_filtered)} Zeilen übrig.")
+
+        # Optional: Zeige abgelehnte URLs nach Bereinigung an
+        rejected_urls = url_series_noempty[~url_series_noempty.str.match(r'^https?://\S+$')]
+        if not rejected_urls.empty:
+            # Zeige nur eine begrenzte Anzahl an, um das Terminal nicht zu überfluten
+            max_rejected_to_show = 20
+            print(f"DEBUG: {len(rejected_urls)} Zeilen entsprachen NACH Bereinigung NICHT dem http/https Regex (max. {max_rejected_to_show} Beispiele):")
+            print(rejected_urls.head(max_rejected_to_show).to_string()) # .to_string() für bessere Darstellung
+
+
+        # Schritt 6: Filterung auf unique
+        urls = url_series_filtered.unique().tolist()
+        print(f"DEBUG: Nach unique(), {len(urls)} URLs werden zurückgegeben.")
+
+
     except pd.errors.EmptyDataError: st.warning(f"Input '{source_name}' ist leer/enthält keine URLs.")
-    except IndexError: st.warning(f"Input '{source_name}' hat keine Spalten (Format?).")
-    except Exception as e: st.error(f"Fehler beim Lesen von '{source_name}': {e}")
+    except IndexError: st.warning(f"Input '{source_name}' hat keine Spalten (Format?). Stelle sicher, dass es eine CSV mit URLs in der ersten Spalte ist.")
+    except Exception as e: st.error(f"Fehler beim Lesen/Verarbeiten von '{source_name}': {e}")
     return urls
+# --- ENDE DER NEUEN FUNKTION ---
+
 
 def save_categorization_gsheet(worksheet_obj, labeler_id, url, categories_str, comment):
     """Hängt eine neue Zeile mit Labeler-ID und Zeitstempel an."""
@@ -168,14 +218,14 @@ def get_tweet_embed_html(tweet_url):
         status_code = e.response.status_code
         print(f"HTTP Fehler {status_code} beim Abrufen des Embeddings für {cleaned_tweet_url}. Tweet evtl. gelöscht oder privat?")
         if status_code == 404:
-             return f"<p style='color:orange;'>Tweet nicht gefunden (404). Wurde er gelöscht?</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
+             return f"<p style='color:orange; font-family: sans-serif; border: 1px solid orange; padding: 10px; border-radius: 5px;'>Tweet nicht gefunden (404). Wurde er gelöscht oder ist der Link fehlerhaft?</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
         elif status_code == 403:
-             return f"<p style='color:orange;'>Zugriff auf Tweet verweigert (403). Ist er privat oder geschützt?</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
+             return f"<p style='color:orange; font-family: sans-serif; border: 1px solid orange; padding: 10px; border-radius: 5px;'>Zugriff auf Tweet verweigert (403). Ist er privat, geschützt oder wurde der Account gesperrt?</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
         else:
-            return f"<p style='color:red;'>Fehler ({status_code}) beim Laden der Tweet-Vorschau.</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
+            return f"<p style='color:red; font-family: sans-serif; border: 1px solid red; padding: 10px; border-radius: 5px;'>Fehler ({status_code}) beim Laden der Tweet-Vorschau.</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
     except requests.exceptions.RequestException as e:
         print(f"Netzwerkfehler beim Abrufen des Embeddings für {cleaned_tweet_url}: {e}")
-        return f"<p style='color:red;'>Netzwerkfehler beim Laden der Vorschau.</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
+        return f"<p style='color:red; font-family: sans-serif; border: 1px solid red; padding: 10px; border-radius: 5px;'>Netzwerkfehler beim Laden der Vorschau.</p><p><a href='{tweet_url}' target='_blank'>Link prüfen</a></p>"
     except Exception as e:
         st.warning(f"Generischer Fehler beim Abrufen des Embeddings für {cleaned_tweet_url}: {e}", icon="❓")
         return None
@@ -267,14 +317,14 @@ if trigger_processing and worksheet:
         all_input_urls = []
         if isinstance(file_input, str): # Standarddatei Pfad
             try:
-                with open(file_input, 'r', encoding='utf-8') as f_default: # Lese als Text
+                # Wichtig: 'rb' für Bytes-Modus, da pandas die Datei selbst öffnet/liest
+                with open(file_input, 'rb') as f_default:
                     all_input_urls = load_urls_from_input_csv(f_default, source_name=file_source_name)
             except Exception as e: st.error(f"Fehler Lesen Standarddatei '{file_source_name}': {e}")
         elif file_input is not None: # UploadedFile Objekt
             # Streamlit's UploadedFile ist standardmäßig im Bytes-Modus,
-            # load_urls_from_input_csv erwartet ein Text-IO-ähnliches Objekt.
-            # Wir können es direkt übergeben, da pandas es handhaben kann.
-             all_input_urls = load_urls_from_input_csv(file_input, source_name=file_source_name)
+            # load_urls_from_input_csv erwartet ein Datei-Objekt.
+            all_input_urls = load_urls_from_input_csv(file_input, source_name=file_source_name)
 
         if all_input_urls:
             # KEINE Filterung gegen Google Sheet mehr
@@ -282,12 +332,12 @@ if trigger_processing and worksheet:
             # random.shuffle(st.session_state.urls_to_process) # URLs mischen?
             st.session_state.total_items = len(st.session_state.urls_to_process)
             st.session_state.current_index = 0
-            st.success(f"{st.session_state.total_items} URLs aus '{file_source_name}' geladen. Bereit zum Labeln für '{st.session_state.labeler_id}'.")
+            st.success(f"{st.session_state.total_items} URLs aus '{file_source_name}' geladen und bereinigt. Bereit zum Labeln für '{st.session_state.labeler_id}'.")
             st.session_state.initialized = True
             # Force rerun, um das Interface zu laden
             st.rerun()
         else:
-             st.error(f"Datei '{file_source_name}' enthält keine gültigen URLs oder konnte nicht gelesen werden.")
+             st.error(f"Datei '{file_source_name}' enthält keine gültigen URLs oder konnte nicht gelesen werden (auch nach Bereinigung). Prüfe die Datei oder die DEBUG-Ausgaben im Terminal.")
              st.session_state.initialized = False
              st.session_state.default_loaded = False # Reset, falls Standarddatei fehlschlug
              st.session_state.input_file_name = None # Reset Dateiname
@@ -333,26 +383,34 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
     # Zurück-Button (Oben)
     if current_idx > 0:
         if nav_cols_top[0].button("⬅️ Zurück", key="back_top", use_container_width=True):
-            # WICHTIG: aktuellen Stand speichern, BEVOR Index geändert wird
-            # (Da die Widgets beim Rerun neu gezeichnet werden, holen wir den Wert direkt)
-            # Wir lesen die Checkbox-Werte *nicht* direkt hier, da sie im unteren Teil definiert sind.
-            # Der untere Zurück-Button muss die Werte in den session_state schreiben!
-            # Daher kann der obere Zurück-Button nur navigieren.
+            # Navigiert nur, speichert NICHT die aktuelle Auswahl (das macht der untere Zurück-Button)
             st.session_state.current_index -= 1
             st.rerun()
     else:
         nav_cols_top[0].button("⬅️ Zurück", key="back_top_disabled", disabled=True, use_container_width=True)
 
     # Fortschrittsanzeige
+    progress_percent = (current_idx) / total_items # Zeigt Fortschritt basierend auf dem, was schon *gespeichert* wurde (implizit)
     progress_text = f"{st.session_state.labeler_id}: Link {current_idx + 1} von {total_items} (aus '{st.session_state.input_file_name}')"
-    nav_cols_top[1].progress((current_idx + 1) / total_items, text=progress_text)
+    nav_cols_top[1].progress(progress_percent, text=progress_text)
+
     # Weiter-Button (Oben) - Navigiert nur, speichert nicht aktiv (macht der untere Button)
     can_go_forward = (current_idx + 1) < total_items
-    if nav_cols_top[2].button("Überspringen & Weiter ➡️" if can_go_forward else "Letztes Item", key="skip_next_top", use_container_width=True, disabled=not can_go_forward):
-         if can_go_forward:
-            # Nur Index erhöhen, nicht speichern
+    # Button deaktiviert, wenn es das letzte Item ist ODER wenn der nächste Index schon Ergebnisse hat (d.h. man war schon mal weiter)
+    # Dies soll verhindern, dass man versehentlich überspringt und gespeicherte Daten verliert, wenn man zurückgeht und dann oben auf weiter klickt.
+    # Man muss den unteren Button nutzen, um explizit zu speichern.
+    next_idx_has_data = (current_idx + 1) in st.session_state.session_results
+    skip_disabled = not can_go_forward or next_idx_has_data
+
+    if nav_cols_top[2].button("Überspringen & Weiter ➡️" if can_go_forward else "Letztes Item", key="skip_next_top", use_container_width=True, disabled=skip_disabled, help="Nur aktiv, wenn für das nächste Item noch keine Daten gespeichert wurden. Zum Speichern & Weiter den unteren Button nutzen."):
+         if can_go_forward and not next_idx_has_data:
+            # Setze leere Ergebnisse für aktuellen Index, um zu markieren, dass er gesehen wurde
+            st.session_state.session_results[current_idx] = []
+            st.session_state.session_comments[current_idx] = "[Übersprungen]" # Optionaler Vermerk
             st.session_state.current_index += 1
             st.rerun()
+         elif next_idx_has_data:
+             st.toast("Nächstes Item hat bereits Daten. Bitte 'Speichern & Weiter' unten verwenden.", icon="⚠️")
 
 
     st.divider()
@@ -362,7 +420,7 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
     base_tweet_url = clean_tweet_url(current_url) # Bereinigte URL für Embed
     embed_html = get_tweet_embed_html(base_tweet_url) # Verwende bereinigte URL für API
 
-    display_url = current_url # URL, die angezeigt wird
+    display_url = current_url # URL, die angezeigt und gespeichert wird
 
     if embed_html:
         components.html(embed_html, height=650, scrolling=True)
@@ -375,7 +433,8 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
         # Fallback: Nur Link anzeigen
         st.markdown(f"**URL:** [{display_url}]({display_url})")
         if "twitter.com" in current_url or "x.com" in current_url:
-            st.caption("Vorschau nicht verfügbar oder Tweet gelöscht/privat.")
+            # Bessere Info geben, warum Embed fehlen könnte
+             st.caption("Vorschau nicht verfügbar (Link evtl. fehlerhaft, Tweet gelöscht/privat oder API-Problem).")
         else:
             st.caption("Vorschau nur für X/Twitter Links verfügbar.")
         st.link_button("Link in neuem Tab öffnen", display_url)
@@ -408,8 +467,9 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
             col_index = 0
 
             for sub_cat in sub_categories:
-                # Eindeutiger Key für jede Checkbox: index + Kategorie
-                checkbox_key = f"cb_{current_idx}_{main_topic.replace(' ', '_')}_{sub_cat.replace(' ', '_').replace('/','_')}"
+                # Eindeutiger Key für jede Checkbox: index + Kategorie (bereinigt)
+                clean_sub_cat_key = re.sub(r'\W+', '', sub_cat) # Entferne Nicht-Alphanumerische Zeichen für Key
+                checkbox_key = f"cb_{current_idx}_{main_topic.replace(' ', '_')}_{clean_sub_cat_key}"
                 # Standardwert der Checkbox = ist sie in der *gespeicherten* Auswahl?
                 is_checked_default = sub_cat in saved_selection
 
@@ -444,7 +504,7 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
                          cat_color = CATEGORY_COLORS.get(m_cat, "grey")
                          break
                  # Erstelle einen farbigen Tag (Markdown oder HTML)
-                 display_tags.append(f'<span style="color: {cat_color}; border: 1px solid {cat_color}; border-radius: 5px; padding: 2px 6px; margin: 2px;">{cat}</span>')
+                 display_tags.append(f'<span style="display: inline-block; color: {cat_color}; border: 1px solid {cat_color}; border-radius: 5px; padding: 2px 6px; margin: 2px; font-size: 0.9em;">{cat}</span>')
 
             st.markdown(" ".join(display_tags), unsafe_allow_html=True)
 
@@ -455,7 +515,7 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
         # Kommentarfeld bleibt gleich
         default_comment = st.session_state.session_comments.get(current_idx, "")
         comment_key = f"comment_{current_idx}"
-        comment = st.text_area("Optionaler Kommentar:", value=default_comment, height=250, key=comment_key) # Etwas höher gemacht
+        comment = st.text_area("Optionaler Kommentar:", value=default_comment, height=250, key=comment_key, placeholder="Füge hier Notizen oder Begründungen hinzu...")
 
     st.divider()
 
@@ -465,7 +525,8 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
     # Zurück-Button (Unten) - SPEICHERT aktuelle Auswahl!
     if current_idx > 0:
         if nav_cols_bottom[0].button("⬅️ Zurück ", key="back_bottom", use_container_width=True): # Leerzeichen hinzugefügt für Unterscheidung von oben
-            # Speichere die *aktuell ausgewählten* Kategorien UND Kommentar für den *aktuellen* Index
+            # Speichere die *aktuell ausgewählten* Kategorien UND Kommentar für den *aktuellen* Index im Session State
+            # Diese Werte werden dann beim Rerun für die Checkboxen/Kommentarfeld als Default verwendet
             st.session_state.session_results[current_idx] = selected_categories_in_widgets
             st.session_state.session_comments[current_idx] = comment
             # Gehe dann zum vorherigen Index
@@ -489,15 +550,17 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
             categories_str = "; ".join(selected_categories_in_widgets)
             # Speichere in Google Sheet
             if save_categorization_gsheet(worksheet, current_labeler_id, display_url, categories_str, comment):
-                # Speichere Auswahl und Kommentar im Session State für diesen Index
+                # Speichere Auswahl und Kommentar im Session State für diesen Index (wichtig für Zurück-Navigation)
                 st.session_state.session_results[current_idx] = selected_categories_in_widgets
                 st.session_state.session_comments[current_idx] = comment
-                st.session_state.processed_urls_in_session.add(current_idx) # Markiere als bearbeitet in dieser Session
+                st.session_state.processed_urls_in_session.add(current_idx) # Markiere als bearbeitet in dieser Session (nur für UI-Feedback)
                 # Gehe zum nächsten Index
                 st.session_state.current_index += 1
                 # Scroll to top (optional, kann manchmal nützlich sein)
                 # js = '''<script>window.scrollTo({ top: 0, behavior: 'smooth' });</script>'''
                 # st.components.v1.html(js)
+                # Cache leeren für get_tweet_embed_html, falls sich was geändert hat (eher selten nötig)
+                # get_tweet_embed_html.clear()
                 st.rerun()
             else:
                 st.error("Speichern in Google Sheet fehlgeschlagen. Bitte prüfe die Verbindung oder versuche es erneut.")
@@ -505,9 +568,8 @@ if st.session_state.get('initialized', False) and st.session_state.urls_to_proce
 # --- Fallback-Anzeige, wenn nichts geladen wurde ---
 elif not st.session_state.get('initialized', False) and not uploaded_file and not st.session_state.get('default_loaded', False) and st.session_state.labeler_id:
     if worksheet: # Nur wenn Sheet verbunden ist und ID da ist
-        # Diese Nachricht wird jetzt durch die Logik in der Dateiauswahl abgedeckt.
-        # st.info(f"Versuche, Standarddatei '{DEFAULT_CSV_PATH}' zu laden oder lade eine andere CSV hoch.")
-        pass # Die Logik oben zeigt bereits passende Infos/Warnungen an.
+        # Die Logik oben zeigt bereits passende Infos/Warnungen an.
+        pass
     elif not worksheet and st.session_state.labeler_id:
          st.error("Verbindung zu Google Sheets fehlgeschlagen. Kann keine Daten laden oder speichern.")
 
@@ -537,16 +599,18 @@ if st.session_state.get('initialized', False):
     total_urls_in_file = st.session_state.total_items
     # Zähle, wie viele Indizes im session_results-Dict sind (zuverlässiger als processed_urls_in_session)
     # oder verwende den aktuellen Index als Maß für den Fortschritt
-    labeled_count = st.session_state.current_index # Zeigt an, *vor* welchem Item man ist
+    labeled_count = st.session_state.current_index # Zeigt an, *vor* welchem Item man ist (Index beginnt bei 0)
     # Wenn man fertig ist, ist current_index = total_items
     if st.session_state.current_index >= total_items:
          labeled_count = total_items
 
     st.sidebar.metric("URLs in Datei", total_urls_in_file)
-    st.sidebar.metric("Aktuelles Item / Bearbeitet", f"{labeled_count+1 if labeled_count < total_items else labeled_count} / {total_urls_in_file}")
+    # Zeige "Item X / Y" an
+    current_item_display = min(labeled_count + 1, total_urls_in_file) # Zählung beginnt bei 1 für Anzeige
+    st.sidebar.metric("Aktuelles Item / Gesamt", f"{current_item_display} / {total_urls_in_file}")
 else:
     st.sidebar.metric("URLs in Datei", "-")
-    st.sidebar.metric("Aktuelles Item / Bearbeitet", "-")
+    st.sidebar.metric("Aktuelles Item / Gesamt", "-")
 
-# Kleiner Hinweis auf Caching
+st.sidebar.caption(f"Letzter Check GSheet Header: {'OK' if not header_written_flag else 'Aktualisiert/Geschrieben'}")
 st.sidebar.caption("Tweet-Vorschauen werden gecached.")
