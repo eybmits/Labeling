@@ -92,10 +92,9 @@ worksheet, header_written_flag, connected_sheet_name = connect_gsheet()
 
 # === Einstellungen ===
 CATEGORIES = {
-    "Personal Well-being": ["Lifestyle", "Mental Health", "Physical Health", "Family/Relationships"],
-    "Societal Systems": ["Healthcare System", "Education System", "Employment/Economy", "Energy Sector"],
-    "Environment & Events": ["Environmental Policies", "(Natural/Man-made) Disasters"],
-    "Other": ["Politics (General)", "Technology", "Miscellaneous"]
+    "Health": ["Lifestyle", "Mental Health", "Physical Health", "Healthcare System"],
+    "Social": ["Education", "Familiy/Relationships", "Employment/Economy"],
+    "Environment": ["Environmental Policies", "Energy Sector", "Natural/Man-made Disasters"],
 }
 ALL_CATEGORIES = [cat for sublist in CATEGORIES.values() for cat in sublist]
 
