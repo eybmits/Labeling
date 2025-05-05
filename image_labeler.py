@@ -190,7 +190,7 @@ def get_tweet_embed_html(tweet_url):
     except Exception as e: st.warning(f"Generischer Embed Fehler {cleaned_tweet_url}: {e}"); return None
 
 # === Streamlit App Hauptteil ===
-st.title("📊 URL-Kategorisierer (Multi-Labeler)")
+st.title("📊 Dataset Labeler")
 
 # --- Session State Initialisierung ---
 if 'labeler_id' not in st.session_state: st.session_state.labeler_id = ""
