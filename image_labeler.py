@@ -327,7 +327,7 @@ if st.session_state.get('initialized', False):
         selected_categories_in_widgets = []
 
         # Kategorienauswahl (Checkboxen)
-        st.markdown("**Wähle passende Kategorien:**")
+        st.markdown("**Wähle passende Kategorien (Optimal 1 Kategorie):**")
         for main_topic, sub_categories in CATEGORIES.items():
             main_color = CATEGORY_COLORS.get(main_topic, "black")
             st.markdown(f'<h6 style="color:{main_color}; border-bottom: 1px solid {main_color}; margin-top: 10px; margin-bottom: 5px;">{main_topic}</h6>', unsafe_allow_html=True) # Kleinere Überschrift (h6)
