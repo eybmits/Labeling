@@ -207,7 +207,7 @@ if 'already_processed_count' not in st.session_state: st.session_state.already_p
 
 # --- Labeler ID Eingabe ---
 labeler_id_input = st.text_input(
-    "👤 Bitte gib deine Labeler ID ein:", value=st.session_state.labeler_id, key="labeler_id_widget", help="Wird zum Speichern des Fortschritts verwendet."
+    "👤 Bitte gib deinen Vornamen ein:", value=st.session_state.labeler_id, key="labeler_id_widget", help="Wird zum Speichern des Fortschritts verwendet."
 )
 st.session_state.labeler_id = labeler_id_input.strip()
 if not st.session_state.labeler_id: st.warning("Bitte Labeler ID eingeben."); st.stop()
