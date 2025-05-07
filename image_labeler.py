@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import os
-import random # Wichtig für die Randomisierung
+import random
 import requests
 from urllib.parse import urlparse
 import time
@@ -93,7 +93,7 @@ SUBCATEGORY_COLORS = {
 @st.cache_data(ttl=300)
 def get_processed_urls_by_labeler(target_labeler_id):
     processed_urls = set()
-    worksheet_obj, _, _ = connect_gsheet() # Stelle sicher, dass wir das aktuelle Worksheet-Objekt verwenden
+    worksheet_obj, _, _ = connect_gsheet()
     if not worksheet_obj or not target_labeler_id:
         st.warning("Worksheet/Labeler ID fehlt beim Abrufen des Fortschritts.")
         return processed_urls
@@ -233,18 +233,9 @@ if trigger_processing and worksheet:
             st.session_state.original_total_items = len(all_input_urls_cleaned)
             print(f"DEBUG: {st.session_state.original_total_items} URLs aus Datei geladen.")
             current_labeler_id = st.session_state.labeler_id
-            get_processed_urls_by_labeler.clear() # Cache leeren, um frische Daten zu erhalten
+            get_processed_urls_by_labeler.clear()
             processed_by_this_labeler = get_processed_urls_by_labeler(current_labeler_id)
-            
-            # URLs filtern, die noch nicht von diesem Labeler bearbeitet wurden
             remaining_urls = [url for url in all_input_urls_cleaned if url.strip() not in processed_by_this_labeler]
-            
-            # === HIER DIE RANDOMISIERUNG EINFÜGEN ===
-            if remaining_urls: # Nur mischen, wenn es URLs gibt
-                random.shuffle(remaining_urls)
-                print(f"DEBUG: {len(remaining_urls)} verbleibende URLs wurden randomisiert.")
-            # === ENDE DER RANDOMISIERUNG ===
-            
             st.session_state.urls_to_process = remaining_urls
             st.session_state.total_items = len(remaining_urls)
             st.session_state.already_processed_count = st.session_state.original_total_items - st.session_state.total_items
@@ -252,7 +243,7 @@ if trigger_processing and worksheet:
             st.session_state.initialized = True
 
             if st.session_state.total_items > 0:
-                st.success(f"{st.session_state.original_total_items} URLs gefunden. {st.session_state.already_processed_count} bereits von dir bearbeitet. {st.session_state.total_items} verbleibend (in zufälliger Reihenfolge).")
+                st.success(f"{st.session_state.original_total_items} URLs gefunden. {st.session_state.already_processed_count} bereits von dir bearbeitet. {st.session_state.total_items} verbleibend.")
             else:
                  st.success(f"Super! Alle {st.session_state.original_total_items} URLs bereits von dir bearbeitet.")
         else:
@@ -390,7 +381,7 @@ if st.session_state.get('initialized', False):
             if save_categorization_gsheet(worksheet, current_labeler_id, display_url, categories_str, comment):
                 st.session_state.session_results[current_local_idx] = selected_categories_in_widgets
                 st.session_state.session_comments[current_local_idx] = comment
-                st.session_state.processed_urls_in_session.add(current_local_idx) # Logisch gesehen sollte hier current_url gespeichert werden, nicht der Index
+                st.session_state.processed_urls_in_session.add(current_local_idx)
                 st.session_state.current_index += 1; st.rerun()
             else: st.error("Speichern fehlgeschlagen.")
 
