@@ -18,7 +18,7 @@ st.set_page_config(layout="wide", page_title="Dataset Labeler)")
 # --- ENDE DES ERSTEN STREAMLIT-BEFEHLS ---
 
 # === Pfad zur Standard-CSV-Datei ===
-DEFAULT_CSV_PATH = "input.csv"  # Diese Datei wird IMMER verwendet
+DEFAULT_CSV_PATH = "input.csv"
 
 # === Google Sheets Setup ===
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/drive']
