@@ -251,7 +251,7 @@ def show_intro_page():
     st.markdown("""
         1.  **Post ansehen:** Links wird eine Vorschau des Posts angezeigt (falls verfügbar) oder der direkte Link. Öffne den Link bei Bedarf in einem neuen Tab.
         2.  **Kategorien wählen:** Rechts findest du die Hauptkategorien (Health, Social, Environment). Wähle **mindestens eine** passende Subkategorie aus, die den **Hauptinhalt** des Posts am besten beschreibt. Mehrfachauswahl ist möglich, wenn der Post klar mehrere Themen abdeckt.
-        3.  **Tooltip nutzen (**Wichtig!**): Fahre mit der Maus über die einzelnen Subkategorien (Checkboxen). Dort findest du die **ausführliche und wichtige Beschreibung** der jeweiligen Kategorie (Definition, Include/Exclude Beispiele) für die korrekte Zuordnung.
+        3.  **Tooltip nutzen** (**Wichtig!**): Fahre mit der Maus über die einzelnen Subkategorien (Checkboxen). Dort findest du die **ausführliche und wichtige Beschreibung** der jeweiligen Kategorie (Definition, Include/Exclude Beispiele) für die korrekte Zuordnung.
         4.  **(Optional) Kommentar:** Füge bei Bedarf einen Kommentar hinzu (z.B. bei Unklarheiten, Mehrdeutigkeiten, technischen Problemen mit dem Post).
         5.  **Speichern & Weiter:** Klicke auf "Speichern & Weiter", um deine Auswahl zu speichern und zum nächsten Post zu gelangen.
         6.  **Navigation:** Mit "Zurück" kannst du vorherige (in dieser Sitzung bearbeitete) Posts korrigieren. Mit "Überspringen" (oben rechts) kannst du einen Post markieren, ohne ihn zu speichern (wird als "[Übersprungen]" im Kommentarfeld vermerkt, wenn du dann zum nächsten gehst).
